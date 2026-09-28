@@ -2,12 +2,13 @@ package de.theidler.create_mobile_packages.compat.fluidlogistics;
 
 import com.simibubi.create.content.logistics.BigItemStack;
 import com.simibubi.create.content.logistics.stockTicker.CraftableBigItemStack;
+import com.yision.fluidlogistics.api.packager.PackageResourceCrafting;
+import com.yision.fluidlogistics.api.packager.PackageResourceCraftingData;
 import com.yision.fluidlogistics.config.Config;
 import com.yision.fluidlogistics.item.CompressedTankItem;
 import com.yision.fluidlogistics.registry.AllItems;
 import com.yision.fluidlogistics.util.FluidAmountHelper;
-import com.yision.fluidlogistics.util.IFluidCraftableBigItemStack;
-import com.yision.fluidlogistics.util.VirtualFluidDisplayHelper;
+import com.yision.fluidlogistics.util.FluidDisplayHelper;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.fluids.FluidStack;
@@ -81,38 +82,24 @@ public class CFLBridge {
     }
 
     public static boolean hasCustomRecipeData(CraftableBigItemStack cbis) {
-        if (cbis instanceof IFluidCraftableBigItemStack fluidCbis) {
-            return fluidCbis.fluidlogistics$hasCustomRecipeData();
-        }
-        return false;
+        return PackageResourceCrafting.has(cbis);
     }
 
     public static int getCustomOutputCount(CraftableBigItemStack cbis) {
-        if (cbis instanceof IFluidCraftableBigItemStack fluidCbis) {
-            return fluidCbis.fluidlogistics$getCustomOutputCount();
-        }
-        return 0;
+        return PackageResourceCrafting.get(cbis).map(PackageResourceCraftingData::outputCount).orElse(0);
     }
 
     public static int getCustomTransferLimit(CraftableBigItemStack cbis) {
-        if (cbis instanceof IFluidCraftableBigItemStack fluidCbis) {
-            return fluidCbis.fluidlogistics$getCustomTransferLimit();
-        }
-        return 0;
+        return PackageResourceCrafting.get(cbis).map(PackageResourceCraftingData::transferLimit).orElse(0);
     }
 
     public static List<BigItemStack> getCustomRequirements(CraftableBigItemStack cbis) {
-        if (cbis instanceof IFluidCraftableBigItemStack fluidCbis) {
-            return fluidCbis.fluidlogistics$getCustomRequirements();
-        }
-        return List.of();
+        return PackageResourceCrafting.get(cbis).map(PackageResourceCraftingData::requirements).orElse(List.of());
     }
 
     public static void setCustomRecipeData(CraftableBigItemStack cbis, int outputCount, int transferLimit,
                                             List<BigItemStack> requirements) {
-        if (cbis instanceof IFluidCraftableBigItemStack fluidCbis) {
-            fluidCbis.fluidlogistics$setCustomRecipeData(outputCount, transferLimit, requirements);
-        }
+        PackageResourceCrafting.set(cbis, new PackageResourceCraftingData(outputCount, transferLimit, requirements));
     }
 
     public static ItemStack keyAsItemStack(GenericStack stack) {
@@ -120,7 +107,7 @@ public class CFLBridge {
     }
 
     public static boolean shouldDisplayAsFluidInPackage(ItemStack stack) {
-        return VirtualFluidDisplayHelper.shouldDisplayAsFluidInPackage(stack)
+        return FluidDisplayHelper.shouldDisplayAsFluidInPackage(stack)
                 && getPackageFluidAmount(stack) > 0;
     }
 
