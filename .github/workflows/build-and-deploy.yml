@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Build
 
 on:
   push:
@@ -12,172 +12,47 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
           cache: 'gradle'
-      
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
-      
-      - name: Clean project
-        run: ./gradlew clean
-      
+
       - name: Build with Gradle
-        run: ./gradlew build
-      
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: '**/build/libs/*.jar'
-          retention-days: 30
-  
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    if: endsWith(github.ref, '/main') && github.event_name == 'push'
-    permissions:
-      contents: write
-      packages: read
+        run: ./gradlew clean build
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: 'gradle'
-      
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-      
-      - name: Build with Gradle
-        run: ./gradlew build
-
-      - name: Publish to CurseForge, Modrinth & GitHub
-        env:
-          CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
-          MODRINTH_API_TOKEN: ${{ secrets.MODRINTH_API_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew publishMod
-
-      - name: Prepare Discord release data
-        id: release_data
+      - name: Prepare downloadable mod jar
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          from pathlib import Path
-          import re
-
-          def read_properties(path: str) -> dict[str, str]:
-              properties = {}
-              for raw_line in Path(path).read_text(encoding='utf-8').splitlines():
-                  line = raw_line.strip()
-                  if not line or line.startswith('#') or '=' not in line:
-                      continue
-                  key, value = line.split('=', 1)
-                  properties[key.strip()] = value.strip()
-              return properties
-
-          properties = read_properties('gradle.properties')
-          required_keys = ('mod_name', 'mod_version', 'minecraft_version')
-          missing_keys = [key for key in required_keys if not properties.get(key)]
-          if missing_keys:
-              raise SystemExit(f"Missing required properties: {', '.join(missing_keys)}")
-
-          mod_name = properties['mod_name']
-          mod_version = properties['mod_version']
-          minecraft_version = properties['minecraft_version']
-
-          changelog_lines = Path('CHANGELOG.md').read_text(encoding='utf-8').splitlines()
-          separator_indexes = [index for index, line in enumerate(changelog_lines) if re.fullmatch(r'-{10,}\s*', line)]
-          if len(separator_indexes) < 2:
-              raise SystemExit('CHANGELOG.md must contain at least two separator lines')
-
-          first_separator = separator_indexes[0]
-          second_separator = separator_indexes[1]
-          next_entry_separator = next((index for index in separator_indexes[2:] if index > second_separator), len(changelog_lines))
-
-          changelog_section = '\n'.join(changelog_lines[first_separator:next_entry_separator]).strip()
-          if not changelog_section:
-              raise SystemExit('Latest changelog section is empty')
-
-          section_lines = changelog_section.splitlines()
-          header_line = section_lines[1].strip() if len(section_lines) > 1 else ''
-          expected_header = rf'^Create: Mobile Packages - v{re.escape(mod_version)} - {re.escape(minecraft_version)} - '
-          if not re.match(expected_header, header_line):
-              raise SystemExit(
-                  f"Latest changelog header '{header_line}' does not match mod_version={mod_version} "
-                  f"and minecraft_version={minecraft_version}"
-              )
-
-          def emit(name: str, value: str) -> None:
-              delimiter = f'EOF_{name}'
-              while delimiter in value:
-                  delimiter += '_'
-              print(f'{name}<<{delimiter}')
-              print(value)
-              print(delimiter)
-
-          emit('MOD_NAME', mod_name)
-          emit('MOD_VERSION', mod_version)
-          emit('MINECRAFT_VERSION', minecraft_version)
-          emit('CHANGELOG', changelog_section)
-          PY
-
-      - name: Send Discord notification
-        if: success()
-        shell: bash
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          MOD_NAME: ${{ steps.release_data.outputs.MOD_NAME }}
-          MOD_VERSION: ${{ steps.release_data.outputs.MOD_VERSION }}
-          MINECRAFT_VERSION: ${{ steps.release_data.outputs.MINECRAFT_VERSION }}
-          CHANGELOG: ${{ steps.release_data.outputs.CHANGELOG }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${DISCORD_WEBHOOK:-}" ]]; then
-            echo "DISCORD_WEBHOOK secret is not configured" >&2
+          mkdir -p dist
+          mapfile -t jars < <(find build/libs -maxdepth 1 -type f -name '*.jar' \
+            ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort)
+          if [[ ${#jars[@]} -eq 0 ]]; then
+            echo "No mod jar found in build/libs" >&2
+            find build -name '*.jar' -type f >&2 || true
             exit 1
           fi
 
-          PAYLOAD=$(python3 - <<'PY'
-          import json
-          import os
+          mod_version=$(grep -E '^mod_version=' gradle.properties | head -n1 | cut -d= -f2 | tr -d '[:space:]')
+          mc_version=$(grep -E '^minecraft_version=' gradle.properties | head -n1 | cut -d= -f2 | tr -d '[:space:]')
+          dest="dist/create_mobile_packages-${mc_version}-${mod_version}-compatibility-with-fluid-logistics-fix.jar"
+          cp "${jars[0]}" "$dest"
+          echo "Packed $(basename "$dest")"
 
-          changelog = os.environ['CHANGELOG']
-          payload = {
-              'allowed_mentions': {'parse': []},
-              'embeds': [{
-                  'title': f"New Release: {os.environ['MOD_NAME']} v{os.environ['MOD_VERSION']}",
-                  'description': f"Minecraft {os.environ['MINECRAFT_VERSION']}\n\n```\n{changelog}\n```",
-                  'color': 3447003,
-                  'fields': [{
-                      'name': '🔗 Download Links',
-                      'value': '[CurseForge](https://www.curseforge.com/minecraft/mc-mods/create-mobile-packages/files) | [Modrinth](https://modrinth.com/mod/1vXRfEHZ/versions) | [GitHub](https://github.com/timplay33/Create-Mobile-Packages/releases)',
-                      'inline': False,
-                  }],
-                  'footer': {'text': 'Create: Mobile Packages'},
-              }],
-          }
-          print(json.dumps(payload, ensure_ascii=False))
-          PY
-          )
-
-          curl --fail-with-body --silent --show-error --request POST "$DISCORD_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            --data "$PAYLOAD"
-
+      - name: Upload mod jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: create-mobile-packages-compatibility-with-fluid-logistics-fix
+          path: dist/*.jar
+          if-no-files-found: error
+          retention-days: 30

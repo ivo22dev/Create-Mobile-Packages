@@ -25,13 +25,13 @@ public class CFLBridge {
     }
 
     public static boolean isVirtualFluid(ItemStack stack) {
-        return stack.getItem() instanceof CompressedTankItem && CompressedTankItem.isVirtual(stack);
+        return stack.getItem() instanceof CompressedTankItem && CompressedTankItem.isFluidStack(stack);
     }
 
     public static boolean isVirtualFluid(GenericStack stack) {
         ItemStack itemStack = keyAsItemStack(stack);
         if (itemStack.getItem() instanceof CompressedTankItem) {
-            return CompressedTankItem.isVirtual(itemStack);
+            return CompressedTankItem.isFluidStack(itemStack);
         }
         return false;
     }
@@ -42,7 +42,7 @@ public class CFLBridge {
 
     public static GenericStack toVirtualFluidStack(FluidStack fluid, int amountMb) {
         ItemStack virtualTank = new ItemStack(AllItems.COMPRESSED_STORAGE_TANK.get());
-        CompressedTankItem.setFluidVirtual(virtualTank, fluid.copyWithAmount(1));
+        CompressedTankItem.setFluid(virtualTank, fluid.copyWithAmount(1));
         return GenericStack.wrap(virtualTank).withAmount(amountMb);
     }
 
