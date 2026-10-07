@@ -18,6 +18,10 @@ public class CMPEMI implements EmiPlugin {
         EmiApi.setSearchText(searchText);
     }
 
+    public static String getSearchText() {
+        return EmiApi.getSearchText();
+    }
+
     @Override
     public void register(EmiRegistry registry) {
         registry.addExclusionArea(PortableStockTickerScreen.class, (screen, consumer) -> {

@@ -83,8 +83,12 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
     int itemsX;
     int itemsY;
     int orderY;
+    int jeiSyncX;
+    int besideSearchButtonY;
     int windowWidth;
     int windowHeight;
+    String previousJEISearchText = "";
+    private boolean ignoreTextInput;
 
     public EditBox searchBox;
     public AddressEditBox addressBox;
@@ -173,6 +177,12 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
             sortAndCategorize(lastSeenStacks);
             refreshSearchResults(false);
             // revalidateOrders();
+        }
+
+        if (shouldSyncFromRecipeViewer()) {
+            refreshSearchNextTick = true;
+            moveToTopNextTick = true;
+            syncRecipeViewers(true);
         }
 
         if (refreshSearchNextTick) {
@@ -273,6 +283,8 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         itemsX = x + (windowWidth - cols * colWidth) / 2 + 1;
         itemsY = y + 33;
         orderY = y + windowHeight - 72;
+        jeiSyncX = x + 25;
+        besideSearchButtonY = y + 18;
 
         MutableComponent searchLabel = CreateLang.translateDirect("gui.stock_keeper.search_items");
         searchBox = new EditBox(new NoShadowFontWrapper(font), x + 71, y + 22, 100, 9, searchLabel);
@@ -280,6 +292,10 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         searchBox.setBordered(false);
         searchBox.setTextColor(0x4A2D31);
         addWidget(searchBox);
+
+        refreshSearchNextTick = true;
+        moveToTopNextTick = true;
+        syncRecipeViewers(true);
 
         boolean initial = addressBox == null;
         // Load address directly from the ItemStack to ensure it persists across world reloads
@@ -311,7 +327,7 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         if (initial) {
             playUiSound(SoundEvents.WOOD_HIT, 0.5f, 1.5f);
             playUiSound(SoundEvents.BOOK_PAGE_TURN, 1, 1);
-            syncRecipeViewers();
+            syncRecipeViewers(false);
         }
 
         trashMenuButton = new IconButton(x - 10, y + 25, AllIcons.I_TRASH);
@@ -580,6 +596,11 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
             }
         }
 
+        if (hasRecipeViewer()) {
+            AllConfigs.client().syncRecipeViewerSearch.get().buttonTexture
+                    .render(pGuiGraphics, jeiSyncX, besideSearchButtonY);
+        }
+
         ms.popPose();
         pGuiGraphics.disableScissor();
 
@@ -727,6 +748,26 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
             graphics.renderComponentTooltip(font, lines, mouseX, mouseY);
         }
 
+        float currentScroll = itemScroll.getValue(partialTicks);
+        if (currentScroll < 1 && mouseY > besideSearchButtonY && mouseY <= besideSearchButtonY + 15) {
+            if (hasRecipeViewer() && mouseX > jeiSyncX && mouseX <= jeiSyncX + 15) {
+                StockKeeperRequestScreen.SearchSyncMode mode = AllConfigs.client().syncRecipeViewerSearch.get();
+                String langKey = "gui.stock_keeper.jei_sync." + mode.getSerializedName();
+                graphics.renderComponentTooltip(font,
+                        List.of(
+                                CreateLang.translate(langKey)
+                                        .component(),
+                                CreateLang.translate(langKey + ".description")
+                                        .style(ChatFormatting.GRAY)
+                                        .component(),
+                                CreateLang.translate("gui.stock_keeper.click_to_cycle")
+                                        .style(ChatFormatting.DARK_GRAY)
+                                        .style(ChatFormatting.ITALIC)
+                                        .component()),
+                        mouseX, mouseY);
+            }
+        }
+
         // Render tooltip of address input
         if (addressBox.getValue()
                 .isBlank() && !addressBox.isFocused() && addressBox.isHovered()) {
@@ -816,7 +857,7 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
             refreshSearchNextTick = true;
             moveToTopNextTick = true;
             searchBox.setFocused(true);
-            syncRecipeViewers();
+            syncRecipeViewers(false);
             return true;
         }
 
@@ -843,6 +884,18 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         }
 
         Couple<Integer> hoveredSlot = getHoveredSlot((int) pMouseX, (int) pMouseY);
+
+        if (itemScroll.getChaseTarget() == 0 && lmb && pMouseY > besideSearchButtonY
+                && pMouseY <= besideSearchButtonY + 15) {
+            if (hasRecipeViewer() && pMouseX > jeiSyncX && pMouseX <= jeiSyncX + 15) {
+                StockKeeperRequestScreen.SearchSyncMode.cycleConfig();
+                refreshSearchNextTick = true;
+                moveToTopNextTick = true;
+                syncRecipeViewers(false);
+                playUiSound(SoundEvents.UI_BUTTON_CLICK.value(), 1, 1);
+                return true;
+            }
+        }
 
         // Confirm
         if (lmb && isConfirmHovered((int) pMouseX, (int) pMouseY)) {
@@ -1218,6 +1271,8 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
 
     @Override
     public boolean charTyped(char pCodePoint, int pModifiers) {
+        if (ignoreTextInput)
+            return false;
         if (addressBox.isFocused() && addressBox.charTyped(pCodePoint, pModifiers))
             return true;
         String s = searchBox.getValue();
@@ -1226,13 +1281,20 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         if (!Objects.equals(s, searchBox.getValue())) {
             refreshSearchNextTick = true;
             moveToTopNextTick = true;
-            syncRecipeViewers();
+            syncRecipeViewers(false);
         }
         return true;
     }
 
     @Override
     public boolean keyPressed(int pKeyCode, int pScanCode, int pModifiers) {
+        ignoreTextInput = false;
+        if (!addressBox.isFocused() && !searchBox.isFocused() && minecraft.options.keyChat.matches(pKeyCode, pScanCode)) {
+            ignoreTextInput = true;
+            searchBox.setFocused(true);
+            return true;
+        }
+
         if (pKeyCode == GLFW.GLFW_KEY_ENTER && searchBox.isFocused()) {
             searchBox.setFocused(false);
             return true;
@@ -1254,7 +1316,7 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
         if (!Objects.equals(s, searchBox.getValue())) {
             refreshSearchNextTick = true;
             moveToTopNextTick = true;
-            syncRecipeViewers();
+            syncRecipeViewers(false);
         }
         return true;
     }
@@ -1322,31 +1384,85 @@ public class PortableStockTickerScreen extends AbstractSimiContainerScreen<Porta
                 .component();
     }
 
-    private void syncRecipeViewers() {
+    private boolean hasRecipeViewer() {
+        return Mods.JEI.isLoaded() || Mods.EMI.isLoaded();
+    }
+
+    private boolean shouldSyncFromRecipeViewer() {
+        StockKeeperRequestScreen.SearchSyncMode mode = AllConfigs.client().syncRecipeViewerSearch.get();
+        if (mode == StockKeeperRequestScreen.SearchSyncMode.NONE
+                || !mode.isBothOr(StockKeeperRequestScreen.SearchSyncMode.SYNC_FROM_JEI))
+            return false;
+
+        if (Mods.JEI.isLoaded() && CMPJEI.runtime != null) {
+            try {
+                boolean hasFocus = CMPJEI.runtime.getIngredientListOverlay().hasKeyboardFocus();
+                return hasFocus && !previousJEISearchText.equals(CMPJEI.runtime.getIngredientFilter().getFilterText());
+            } catch (Throwable t) {
+                CreateMobilePackages.LOGGER.debug("JEI search sync check failed", t);
+            }
+        }
+
+        if (Mods.EMI.isLoaded() && !searchBox.isFocused()) {
+            try {
+                return !previousJEISearchText.equals(de.theidler.create_mobile_packages.compat.emi.CMPEMI.getSearchText());
+            } catch (Throwable t) {
+                CreateMobilePackages.LOGGER.debug("EMI search sync check failed", t);
+            }
+        }
+        return false;
+    }
+
+    private void syncRecipeViewers(boolean fromViewer) {
         if (searchBox == null)
             return;
-        StockKeeperRequestScreen.SearchSyncMode syncEnabled = AllConfigs.client().syncRecipeViewerSearch.get();
-        if (syncEnabled == StockKeeperRequestScreen.SearchSyncMode.NONE)
+
+        StockKeeperRequestScreen.SearchSyncMode mode = AllConfigs.client().syncRecipeViewerSearch.get();
+        if (mode == StockKeeperRequestScreen.SearchSyncMode.NONE)
             return;
 
-        String text = searchBox.getValue();
+        if (mode.isBothOr(StockKeeperRequestScreen.SearchSyncMode.SYNC_FROM_JEI) && fromViewer) {
+            String viewerText = getRecipeViewerSearchText();
+            if (viewerText != null) {
+                previousJEISearchText = viewerText;
+                searchBox.setValue(previousJEISearchText);
+            }
+        } else if (mode.isBothOr(StockKeeperRequestScreen.SearchSyncMode.SYNC_FROM_STOCK_KEEPER) && !fromViewer) {
+            setRecipeViewerSearchText(searchBox.getValue());
+        }
+    }
 
-        // Sync with JEI if loaded
+    @Nullable
+    private String getRecipeViewerSearchText() {
+        if (Mods.JEI.isLoaded() && CMPJEI.runtime != null) {
+            try {
+                return CMPJEI.runtime.getIngredientFilter().getFilterText();
+            } catch (Throwable t) {
+                CreateMobilePackages.LOGGER.debug("JEI search sync failed", t);
+            }
+        }
+        if (Mods.EMI.isLoaded()) {
+            try {
+                return de.theidler.create_mobile_packages.compat.emi.CMPEMI.getSearchText();
+            } catch (Throwable t) {
+                CreateMobilePackages.LOGGER.debug("EMI search sync failed", t);
+            }
+        }
+        return null;
+    }
+
+    private void setRecipeViewerSearchText(String text) {
         if (Mods.JEI.isLoaded() && CMPJEI.runtime != null) {
             try {
                 CMPJEI.runtime.getIngredientFilter().setFilterText(text);
             } catch (Throwable t) {
-                // JEI sync failed
                 CreateMobilePackages.LOGGER.debug("JEI search sync failed", t);
             }
         }
-
-        // Sync with EMI if loaded
         if (Mods.EMI.isLoaded()) {
             try {
                 de.theidler.create_mobile_packages.compat.emi.CMPEMI.setSearchText(text);
             } catch (Throwable t) {
-                // EMI sync failed
                 CreateMobilePackages.LOGGER.debug("EMI search sync failed", t);
             }
         }
